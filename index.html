@@ -8,6 +8,26 @@
 	</head>
 	<body>
 
+		<div id="mySidenav" class="sidenav">
+			<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
+			<a href="#">item_1</a>
+			<a href="#">item_2</a>
+			<a href="#">item_3</a>
+			<a href="#">item_4</a>
+		</div>
+
+		<span style="font-size:30px;cursor:pointer;position:fixed;top:10px;left:10px;z-index:2;color:#fff" onclick="openNav()">&#9776; open</span>
+
+		<script>
+			function openNav() {
+				document.getElementById("mySidenav").style.width = "250px";
+			}
+
+			function closeNav() {
+				document.getElementById("mySidenav").style.width = "0";
+			}
+		</script>
+
 		<script type="importmap">
 			{
 				"imports": {
