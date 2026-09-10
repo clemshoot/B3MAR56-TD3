@@ -5,18 +5,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <link type="text/css" rel="stylesheet" href="main.css">
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 </head>
 <body>
 
-<div id="mySidenav" class="sidenav">
-    <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
-    <a href="#">item_1</a>
-    <a href="#">item_2</a>
-    <a href="#">item_3</a>
-    <a href="#">item_4</a>
-</div>
+<div id="content">
 
-<span style="position:fixed;top:0;left:0;font-size:30px;cursor:pointer;z-index:2;color:#fff;padding:10px 15px;" onclick="openNav()">&#9776; open</span>
+    <div id="mySidenav" class="sidenav">
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
+        <a class="ar-object" id="1" href="#">item_1</a>
+        <a class="ar-object" id="2" href="#">item_2</a>
+        <a class="ar-object" id="3" href="#">item_3</a>
+        <a class="ar-object" id="4" href="#">item_4</a>
+    </div>
+
+    <div id="container" style="position: fixed;"></div>
+
+    <span style="position:fixed;top:0;left:0;font-size:30px;cursor:pointer;z-index:2;color:#fff;padding:10px 15px;" onclick="openNav()">&#9776; open</span>
+
+    <button type="button" id="place-button">PLACE</button>
+
+</div>
 
 <script>
     function openNav() {
@@ -25,7 +34,7 @@
     function closeNav() {
         document.getElementById("mySidenav").style.width = "0";
     }
-    // dues accessibles globalement car le script principal est un module
+    // rendues accessibles globalement car le script principal est un module
     window.openNav = openNav;
     window.closeNav = closeNav;
 </script>
@@ -43,150 +52,272 @@
 
 import * as THREE from 'three';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 
 let container;
 let camera, scene, renderer;
-let controller1, controller2;
-
 let reticle;
+let pmremGenerator, current_object, controls, envmap;
 
 let hitTestSource = null;
 let hitTestSourceRequested = false;
 
+let touchDown, touchX, touchY, deltaX, deltaY;
+
 init();
+
+// url par défaut chargée au démarrage de la page
+let current_url = "1";
+
+$(".ar-object").click(function () {
+
+    // met à jour l'objet courant
+    current_url = $(this).attr("id");
+
+    // on ne charge l'objet dans la scène que si l'AR n'est pas démarrée
+    if ( !renderer.xr.isPresenting ) {
+
+        if ( current_object != null ) {
+            scene.remove( current_object );
+        }
+        loadModel( current_url );
+
+    }
+
+} );
+
+function loadModel( model ) {
+
+    new HDRLoader()
+        .setPath( 'textures/' )
+        .load( 'relax_inn_seaview_suite_4k.hdr', function ( texture ) {
+
+            envmap = pmremGenerator.fromEquirectangular( texture ).texture;
+
+            texture.flipY = false; // désactiver y-flip pour éviter l'avertissement
+            texture.premultiplyAlpha = false; // désactiver alpha-premult pour éviter l'avertissement
+
+            scene.environment = envmap;
+            texture.dispose();
+            pmremGenerator.dispose();
+            render();
+
+            var loader = new GLTFLoader().setPath( '3d/' );
+            loader.load( model + '.glb', function ( glb ) {
+
+                current_object = glb.scene;
+                scene.add( current_object );
+
+                arPlace();
+
+                // centrer les objets sur la scène
+                var box = new THREE.Box3();
+                box.setFromObject( current_object );
+                box.getCenter( controls.target );
+
+                controls.update();
+                render();
+
+            } );
+
+        } );
+
+}
 
 function init() {
 
-container = document.createElement( 'div' );
-document.body.appendChild( container );
+    container = document.createElement( 'div' );
+    document.getElementById( 'container' ).appendChild( container );
 
-scene = new THREE.Scene();
+    scene = new THREE.Scene();
 
-camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 0.01, 20 );
+    camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 0.01, 20 );
 
-const light = new THREE.HemisphereLight( 0xffffff, 0xbbbbff, 3 );
-light.position.set( 0.5, 1, 0.25 );
-scene.add( light );
+    renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
+    renderer.setPixelRatio( window.devicePixelRatio );
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.setAnimationLoop( render );
+    renderer.xr.enabled = true;
+    container.appendChild( renderer.domElement );
 
-//
+    pmremGenerator = new THREE.PMREMGenerator( renderer );
+    pmremGenerator.compileEquirectangularShader();
 
-renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
-renderer.setPixelRatio( window.devicePixelRatio );
-renderer.setSize( window.innerWidth, window.innerHeight );
-renderer.setAnimationLoop( animate );
-renderer.xr.enabled = true;
-container.appendChild( renderer.domElement );
+    controls = new OrbitControls( camera, renderer.domElement );
+    controls.addEventListener( 'change', render );
+    controls.minDistance = 2;
+    controls.maxDistance = 10;
+    controls.target.set( 0, 0, -0.2 );
+    // contrôle la vitesse de rotation
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
 
-//
+    var directionalLight = new THREE.DirectionalLight( 0xdddddd, 1 );
+    directionalLight.position.set( 0, 0, 1 ).normalize();
+    scene.add( directionalLight );
 
-document.body.appendChild( ARButton.createButton( renderer, { requiredFeatures: [ 'hit-test' ] } ) );
+    var ambientLight = new THREE.AmbientLight( 0x222222 );
+    scene.add( ambientLight );
 
-//
+    //AR SETUP
+    let options = {
+        requiredFeatures: [ 'hit-test' ],
+        optionalFeatures: [ 'dom-overlay' ],
+    }
 
-const geometry = new THREE.CylinderGeometry( 0.1, 0.1, 0.2, 32 ).translate( 0, 0.1, 0 );
+    options.domOverlay = { root: document.getElementById( 'content' ) };
+    document.body.appendChild( ARButton.createButton( renderer, options ) );
 
+    $( "#ARButton" ).click( function () {
+        current_object.visible = false;
+    } );
 
-function onSelect() {
+    reticle = new THREE.Mesh(
+        new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( - Math.PI / 2 ),
+        new THREE.MeshBasicMaterial()
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add( reticle );
 
-if ( reticle.visible ) {
+    $( "#place-button" ).click( function () {
+        arPlace();
+    } );
 
-const material = new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } );
-const mesh = new THREE.Mesh( geometry, material );
-reticle.matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
-mesh.scale.y = Math.random() * 2 + 1;
-scene.add( mesh );
+    function arPlace() {
+        if ( reticle.visible ) {
+            current_object.position.setFromMatrixPosition( reticle.matrix );
+            current_object.visible = true;
+        }
+    }
 
-                    }
+    // rend la fonction accessible au reste du script module
+    window.arPlace = arPlace;
 
-                }
+    //
 
-controller1 = renderer.xr.getController( 0 );
-controller1.addEventListener( 'select', onSelect );
-scene.add( controller1 );
+    renderer.domElement.addEventListener( 'touchstart', function ( e ) {
+        e.preventDefault();
+        touchDown = true;
+        touchX = e.touches[ 0 ].pageX;
+        touchY = e.touches[ 0 ].pageY;
+    }, false );
 
-controller2 = renderer.xr.getController( 1 );
-controller2.addEventListener( 'select', onSelect );
-scene.add( controller2 );
+    renderer.domElement.addEventListener( 'touchend', function ( e ) {
+        e.preventDefault();
+        touchDown = false;
+    }, false );
 
-reticle = new THREE.Mesh(
-new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( - Math.PI / 2 ),
-new THREE.MeshBasicMaterial()
-                );
-reticle.matrixAutoUpdate = false;
-reticle.visible = false;
-scene.add( reticle );
+    renderer.domElement.addEventListener( 'touchmove', function ( e ) {
+        e.preventDefault();
 
-//
+        if ( !touchDown ) {
+            return;
+        }
 
-window.addEventListener( 'resize', onWindowResize );
+        deltaX = e.touches[ 0 ].pageX - touchX;
+        deltaY = e.touches[ 0 ].pageY - touchY;
 
-            }
+        touchX = e.touches[ 0 ].pageX;
+        touchY = e.touches[ 0 ].pageY;
+
+        rotateObject();
+
+    }, false );
+
+    function rotateObject() {
+        if ( current_object && reticle.visible ) {
+            current_object.rotation.y += deltaX / 100;
+        }
+    }
+
+    //
+
+    window.addEventListener( 'resize', onWindowResize );
+
+    // charge un objet par défaut au démarrage de la page
+    loadModel( current_url );
+
+}
 
 function onWindowResize() {
 
-camera.aspect = window.innerWidth / window.innerHeight;
-camera.updateProjectionMatrix();
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
 
-renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.setSize( window.innerWidth, window.innerHeight );
 
-            }
+}
 
 //
 
-function animate( timestamp, frame ) {
+function render( timestamp, frame ) {
 
-if ( frame ) {
+    if ( frame ) {
 
-const referenceSpace = renderer.xr.getReferenceSpace();
-const session = renderer.xr.getSession();
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const session = renderer.xr.getSession();
 
-if ( hitTestSourceRequested === false ) {
+        if ( hitTestSourceRequested === false ) {
 
-session.requestReferenceSpace( 'viewer' ).then( function ( referenceSpace ) {
+            session.requestReferenceSpace( 'viewer' ).then( function ( referenceSpace ) {
 
-session.requestHitTestSource( { space: referenceSpace } ).then( function ( source ) {
+                session.requestHitTestSource( { space: referenceSpace } ).then( function ( source ) {
 
-hitTestSource = source;
+                    hitTestSource = source;
 
-                            } );
+                } );
 
-                        } );
+            } );
 
-session.addEventListener( 'end', function () {
+            session.addEventListener( 'end', function () {
 
-hitTestSourceRequested = false;
-hitTestSource = null;
+                hitTestSourceRequested = false;
+                hitTestSource = null;
 
-                        } );
+                reticle.visible = false;
 
-hitTestSourceRequested = true;
+                var box = new THREE.Box3();
+                box.setFromObject( current_object );
+                box.getCenter( controls.target );
 
-                    }
+                document.getElementById( "place-button" ).style.display = "none";
 
-if ( hitTestSource ) {
+            } );
 
-const hitTestResults = frame.getHitTestResults( hitTestSource );
+            hitTestSourceRequested = true;
 
-if ( hitTestResults.length ) {
+        }
 
-const hit = hitTestResults[ 0 ];
+        if ( hitTestSource ) {
 
-reticle.visible = true;
-reticle.matrix.fromArray( hit.getPose( referenceSpace ).transform.matrix );
+            const hitTestResults = frame.getHitTestResults( hitTestSource );
 
-                        } else {
+            if ( hitTestResults.length ) {
 
-reticle.visible = false;
+                const hit = hitTestResults[ 0 ];
 
-                        }
+                reticle.visible = true;
+                reticle.matrix.fromArray( hit.getPose( referenceSpace ).transform.matrix );
 
-                    }
+                document.getElementById( "place-button" ).style.display = "block";
 
-                }
+            } else {
 
-renderer.render( scene, camera );
+                reticle.visible = false;
+                document.getElementById( "place-button" ).style.display = "none";
 
             }
+
+        }
+
+    }
+
+    renderer.render( scene, camera );
+
+}
 
 </script>
 </body>
